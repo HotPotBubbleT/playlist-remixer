@@ -45,6 +45,7 @@ const setLengthWarning = document.querySelector("#setLengthWarning");
 const parsedPreview = document.querySelector("#parsedPreview");
 const parsedTrackList = document.querySelector("#parsedTrackList");
 const formatButtons = document.querySelectorAll(".format-toggle__button");
+const productionApiBase = "https://mixory-api.onrender.com";
 
 let currentRows = [];
 let currentData = {};
@@ -160,7 +161,7 @@ const copy = {
     moveUpLabel: "Move up",
     moveDownLabel: "Move down",
     apiFooterKicker: "Data sources",
-    apiFooterCopy: "MusicBrainz, GetSongBPM, Last.fm, and local reference sets help power analysis.",
+    apiFooterCopy: "BPM and key hints come from GetSongBPM. MusicBrainz and Last.fm help with track metadata and genre clues. Local reference sets guide energy flow and transition patterns. Results are estimates, so review before playing.",
     exportHelp: "Simple for copying. Detailed includes BPM/key, energy, and risk.",
     exportSimpleButton: "Export Simple TXT",
     exportDetailedButton: "Export Detailed TXT",
@@ -274,7 +275,7 @@ const copy = {
     moveUpLabel: "上移",
     moveDownLabel: "下移",
     apiFooterKicker: "数据来源",
-    apiFooterCopy: "分析由 MusicBrainz、GetSongBPM、Last.fm 和本地 reference set 辅助。",
+    apiFooterCopy: "BPM 和调性参考来自 GetSongBPM；MusicBrainz 和 Last.fm 辅助识别曲目信息与曲风线索；本地 reference set 用来参考能量走势和转场模式。结果是估算，正式播放前建议再检查。",
     exportHelp: "简洁版方便复制；详细版包含 BPM/调性、能量和风险。",
     exportSimpleButton: "导出简洁 TXT",
     exportDetailedButton: "导出详细 TXT",
@@ -1276,7 +1277,13 @@ function formatBpmRange(value = "") {
 }
 
 function shouldUseBackend() {
-  return window.location.protocol === "http:" || window.location.protocol === "https:";
+  return Boolean(getApiBaseUrl());
+}
+
+function getApiBaseUrl() {
+  const host = window.location.hostname;
+  if (host === "127.0.0.1" || host === "localhost") return "";
+  return productionApiBase;
 }
 
 async function analyzePlaylistWithBackend() {
@@ -1284,9 +1291,9 @@ async function analyzePlaylistWithBackend() {
 
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 45000);
-  const response = await fetch("/api/tracks/analyze", {
+  const response = await fetch(`${getApiBaseUrl()}/api/tracks/analyze`, {
     method: "POST",
-    credentials: "include",
+    credentials: "omit",
     signal: controller.signal,
     headers: {
       "Content-Type": "application/json"
