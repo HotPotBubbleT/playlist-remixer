@@ -149,7 +149,7 @@ const copy = {
     setRationaleTitle: "Why this set",
     setRationaleCopy: "Built from genre, BPM, vibe, and transition fit.",
     playbackTipTitle: "Try the DJ-style playback",
-    playbackTipCopy: "Copy this order into Apple Music AutoMix or Spotify Mix.",
+    playbackTipCopy: "Create a playlist with this order, then turn on Apple Music AutoMix or Spotify Mix to hear smoother DJ-style transitions.",
     appleAutoMixLink: "Apple Music AutoMix",
     spotifyMixLink: "Spotify Mix",
     referenceArtistPrefix: "Reference",
@@ -159,7 +159,7 @@ const copy = {
     riskSmooth: "Smooth",
     riskCheck: "Check",
     riskRisky: "Risky",
-    reorderHint: "Drag to reorder. The curve updates.",
+    reorderHint: "Copy a title / artist to search one track, or export Simple TXT for the full set. Drag tracks to adjust the order; the curve updates.",
     moveUpLabel: "Move up",
     moveDownLabel: "Move down",
     apiFooterKicker: "Data sources",
@@ -265,7 +265,7 @@ const copy = {
     setRationaleTitle: "为什么这样生成",
     setRationaleCopy: "基于曲风、BPM（节奏速度）、氛围和转场适配生成。",
     playbackTipTitle: "在音乐 App 里体验 DJ set 感",
-    playbackTipCopy: "把这个顺序复制到 Apple Music AutoMix 或 Spotify Mix 里试试。",
+    playbackTipCopy: "按这个顺序在 Apple Music 或 Spotify 新建播放列表，再开启 AutoMix / Mix 播放，会更接近 DJ set 的连续过渡。",
     appleAutoMixLink: "Apple Music AutoMix",
     spotifyMixLink: "Spotify Mix",
     referenceArtistPrefix: "参考",
@@ -275,7 +275,7 @@ const copy = {
     riskSmooth: "顺滑",
     riskCheck: "可检查",
     riskRisky: "可能突兀",
-    reorderHint: "拖动曲目即可调整，曲线会同步变化。",
+    reorderHint: "想找单首歌，可直接复制歌名 / 艺人；想复制整份 set，可导出 Simple TXT。拖动曲目可微调顺序，曲线会同步更新。",
     moveUpLabel: "上移",
     moveDownLabel: "下移",
     apiFooterKicker: "数据来源",
@@ -2173,8 +2173,8 @@ function renderTracklist() {
   tracklist.innerHTML = currentRows
     .map(
       (track, index) => `
-        <li class="track" draggable="true" data-row-index="${index}">
-          <button class="track__drag" type="button" aria-label="${escapeHtml(currentLang === "zh" ? "拖动排序" : "Drag to reorder")}" title="${escapeHtml(currentLang === "zh" ? "拖动排序" : "Drag to reorder")}">⋮⋮</button>
+        <li class="track" data-row-index="${index}">
+          <button class="track__drag" type="button" draggable="true" aria-label="${escapeHtml(currentLang === "zh" ? "拖动排序" : "Drag to reorder")}" title="${escapeHtml(currentLang === "zh" ? "拖动排序" : "Drag to reorder")}">⋮⋮</button>
           <div class="track__name">
             <strong>${escapeHtml(track.title)}</strong>
             <span>${escapeHtml(track.artist)}</span>
@@ -2366,6 +2366,10 @@ parsedTrackList?.addEventListener("click", (event) => {
 });
 
 tracklist.addEventListener("dragstart", (event) => {
+  if (!event.target.closest(".track__drag")) {
+    event.preventDefault();
+    return;
+  }
   const row = event.target.closest(".track");
   if (!row) return;
   draggedTrackIndex = Number(row.dataset.rowIndex);
