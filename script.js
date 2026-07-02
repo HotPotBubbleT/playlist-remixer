@@ -94,7 +94,9 @@ const copy = {
     recommendationLengthNote: "Length follows your source tracks.",
     parsedKicker: "Track check",
     parsedTitle: "Confirm title and artist",
-    parsedCopy: "Check any reversed title / artist rows.",
+    parsedCopy: "Only tracks that may need review are shown.",
+    parsedAllClear: "Parsed {count} tracks. No obvious title / artist issues found.",
+    parsedNeedsReview: "{count} tracks may need a quick check.",
     formatAuto: "Auto",
     formatArtistTitle: "Artist - Track",
     formatTitleArtist: "Track - Artist",
@@ -208,7 +210,9 @@ const copy = {
     recommendationLengthNote: "时长会按输入歌单估算。",
     parsedKicker: "曲目检查",
     parsedTitle: "确认歌名和艺人",
-    parsedCopy: "检查歌名 / 艺人是否反了。",
+    parsedCopy: "这里只显示可能需要检查的曲目。",
+    parsedAllClear: "已识别 {count} 首曲目，暂未发现明显的歌名 / 艺人问题。",
+    parsedNeedsReview: "有 {count} 首曲目建议快速检查。",
     formatAuto: "自动",
     formatArtistTitle: "Artist - Track",
     formatTitleArtist: "Track - Artist",
@@ -1289,6 +1293,7 @@ function getApiBaseUrl() {
 async function analyzePlaylistWithBackend() {
   if (!shouldUseBackend()) return false;
 
+  const formData = getFormData();
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 45000);
   const response = await fetch(`${getApiBaseUrl()}/api/tracks/analyze`, {
@@ -1300,8 +1305,10 @@ async function analyzePlaylistWithBackend() {
     },
     body: JSON.stringify({
       rawText: musicInput.value.trim(),
-      vibe: getFormData().vibe,
-      genre: getFormData().genre
+      vibe: formData.vibe,
+      genre: formData.genre,
+      dj: formData.dj,
+      notes: formData.notes
     })
   }).finally(() => window.clearTimeout(timeout));
 
@@ -1528,23 +1535,32 @@ function renderParsedPreview() {
   }
 
   parsedPreview.hidden = false;
-  parsedTrackList.innerHTML = sourceTracks
-    .map((track, index) => {
-      const confidence = getParseConfidence(track);
-      const shouldCheck = confidence === "low";
-      return `
-        <div class="parsed-row parsed-row--${confidence}">
-          <span class="parsed-row__index">${String(index + 1).padStart(2, "0")}</span>
-          <div class="parsed-row__main">
-            <strong>${escapeHtml(track.title || "--")}</strong>
-            <span>${escapeHtml(track.artist || (currentLang === "zh" ? "未知艺人" : "Unknown artist"))}</span>
+  const reviewRows = sourceTracks
+    .map((track, index) => ({ track, index, confidence: getParseConfidence(track) }))
+    .filter((item) => item.confidence === "low");
+  const parsedCopy = document.querySelector("#parsedCopy");
+  if (parsedCopy) {
+    parsedCopy.textContent = reviewRows.length
+      ? t("parsedNeedsReview").replace("{count}", reviewRows.length)
+      : t("parsedAllClear").replace("{count}", sourceTracks.length);
+  }
+  parsedTrackList.innerHTML = reviewRows.length
+    ? reviewRows
+      .map(({ track, index, confidence }) => {
+        return `
+          <div class="parsed-row parsed-row--${confidence}">
+            <span class="parsed-row__index">${String(index + 1).padStart(2, "0")}</span>
+            <div class="parsed-row__main">
+              <strong>${escapeHtml(track.title || "--")}</strong>
+              <span>${escapeHtml(track.artist || (currentLang === "zh" ? "未知艺人" : "Unknown artist"))}</span>
+            </div>
+            <span class="parsed-row__confidence">${escapeHtml(t("confidenceLow"))}</span>
+            <button class="parsed-row__swap" type="button" data-swap-index="${index}">${escapeHtml(t("swapButton"))}</button>
           </div>
-          ${shouldCheck ? `<span class="parsed-row__confidence">${escapeHtml(t("confidenceLow"))}</span>` : ""}
-          <button class="parsed-row__swap" type="button" data-swap-index="${index}">${escapeHtml(t("swapButton"))}</button>
-        </div>
-      `;
-    })
-    .join("");
+        `;
+      })
+      .join("")
+    : "";
   updateFormatButtons();
 }
 
@@ -1749,7 +1765,7 @@ function makeTrackRows(data) {
   const desiredTracks = sourceTracks.length
     ? Math.min(getDesiredTrackCount(data.length), sourcePool.length)
     : getDesiredTrackCount(data.length);
-  const energyValues = makeVersionEnergyValues(data.vibe, desiredTracks, setVersionMode);
+  const energyValues = makeVersionEnergyValues(data.vibe, desiredTracks, setVersionMode, data);
   const sequence = makeTransitionFriendlySequence(sourcePool, data, energyValues, desiredTracks, setVersionMode);
 
   return Array.from({ length: desiredTracks }, (_, index) => {
@@ -1814,10 +1830,11 @@ function makeExcitingSequence(pool, data, energyValues) {
 }
 
 function findBestStartTrackIndex(tracks, data) {
+  const preference = getPreferenceProfile(data);
   let bestIndex = 0;
   let bestScore = Infinity;
   tracks.forEach((track, index) => {
-    const score = Math.abs(estimateTrackMixEnergy(track, data) - 25) + Math.abs((track.tempo || estimateBpmForTrack(data, index)) - getTargetTempoForPosition(data, 0, tracks.length)) * 0.25;
+    const score = Math.abs(estimateTrackMixEnergy(track, data) - preference.startTarget) + Math.abs((track.tempo || estimateBpmForTrack(data, index)) - getTargetTempoForPosition(data, 0, tracks.length)) * preference.startTempoWeight;
     if (score < bestScore) {
       bestScore = score;
       bestIndex = index;
@@ -1827,6 +1844,7 @@ function findBestStartTrackIndex(tracks, data) {
 }
 
 function findBestNextTrackIndex(previous, candidates, data, targetEnergy, mode = "smoothest") {
+  const preference = getPreferenceProfile(data);
   let bestIndex = 0;
   let bestScore = Infinity;
   candidates.forEach((candidate, index) => {
@@ -1837,7 +1855,10 @@ function findBestNextTrackIndex(previous, candidates, data, targetEnergy, mode =
     const weights = mode === "exciting"
       ? { tempo: 1.15, key: 4.8, energy: 0.35, genre: 0.75 }
       : { tempo: 1.8, key: 7, energy: 0.75, genre: 1 };
-    const score = tempoGap * weights.tempo + keyGap * weights.key + energyGap * weights.energy + genrePenalty * weights.genre;
+    const score = tempoGap * weights.tempo * preference.tempoWeight
+      + keyGap * weights.key * preference.keyWeight
+      + energyGap * weights.energy * preference.energyWeight
+      + genrePenalty * weights.genre * preference.genreWeight;
     if (score < bestScore) {
       bestScore = score;
       bestIndex = index;
@@ -1847,6 +1868,7 @@ function findBestNextTrackIndex(previous, candidates, data, targetEnergy, mode =
 }
 
 function findBestExcitingNextTrackIndex(previous, candidates, data, targetEnergy, position, count) {
+  const preference = getPreferenceProfile(data);
   let bestIndex = 0;
   let bestScore = Infinity;
   candidates.forEach((candidate, index) => {
@@ -1860,7 +1882,11 @@ function findBestExcitingNextTrackIndex(previous, candidates, data, targetEnergy
     const movementBonus = isBuildSection
       ? Math.max(0, candidateEnergy - previousEnergy) * 0.28
       : Math.max(0, previousEnergy - candidateEnergy) * 0.18;
-    const score = energyGap * 1.45 + tempoGap * 0.85 + keyGap * 3.5 + genrePenalty * 0.55 - movementBonus;
+    const score = energyGap * 1.45 * preference.energyWeight
+      + tempoGap * 0.85 * preference.tempoWeight
+      + keyGap * 3.5 * preference.keyWeight
+      + genrePenalty * 0.55 * preference.genreWeight
+      - movementBonus * preference.movementWeight;
     if (score < bestScore) {
       bestScore = score;
       bestIndex = index;
@@ -2003,17 +2029,48 @@ function makeEnergyValues(vibe, count) {
   });
 }
 
-function makeVersionEnergyValues(vibe, count, mode = "smoothest") {
+function makeVersionEnergyValues(vibe, count, mode = "smoothest", data = currentData) {
   const values = makeEnergyValues(vibe, count);
-  if (mode !== "exciting" || values.length < 4) return values;
-  return values.map((value, index) => {
+  const preference = getPreferenceProfile(data);
+  const shapedValues = values.map((value, index) => {
     const position = values.length === 1 ? 0 : index / (values.length - 1);
+    const softIntro = index === 0 ? preference.introBias : 0;
+    const softOutro = index === values.length - 1 ? preference.outroBias : 0;
+    const middleLift = Math.sin(position * Math.PI) * preference.midLift;
+    return Math.round(Math.max(8, Math.min(98, value + preference.energyBias + softIntro + softOutro + middleLift)));
+  });
+  if (mode !== "exciting" || shapedValues.length < 4) return shapedValues;
+  return shapedValues.map((value, index) => {
+    const position = shapedValues.length === 1 ? 0 : index / (shapedValues.length - 1);
     const lift = Math.sin(position * Math.PI) * 16;
     const bounce = Math.sin(index * 2.15) * 5;
     const earlyDip = index === 0 ? -8 : 0;
-    const outroDip = index === values.length - 1 ? -10 : 0;
+    const outroDip = index === shapedValues.length - 1 ? -10 : 0;
     return Math.round(Math.max(10, Math.min(98, value + lift + bounce + earlyDip + outroDip)));
   });
+}
+
+function getPreferenceProfile(data = {}) {
+  const text = normalizeNameForScore(`${data.dj || ""} ${data.notes || ""}`);
+  const isSmooth = /smooth|soft|gentle|dreamy|warm|melodic|chill|coffee|focus|lo.?fi|nujabes|bonobo|ben bohmer|lane 8|four tet|black coffee|keinemusik|deep/.test(text);
+  const isExciting = /peak|club|rave|festival|workout|hard|high energy|exciting|punchy|fred again|peggy gou|chris lake|fisher|skrillex|knock2|mau p|charlotte/.test(text);
+  const wantsSoftIntro = /soft intro|gentle intro|slow intro|warm intro|柔和|慢慢|开场/.test(text);
+  const wantsPeak = /mid.?set peak|peak|高潮|推高|爆点/.test(text);
+  const wantsDreamyOutro = /dreamy outro|soft outro|gentle ending|closing|outro|结尾|收尾/.test(text);
+
+  return {
+    energyBias: (isExciting ? 7 : 0) + (isSmooth ? -6 : 0),
+    introBias: wantsSoftIntro || isSmooth ? -8 : 0,
+    outroBias: wantsDreamyOutro || isSmooth ? -7 : 0,
+    midLift: wantsPeak || isExciting ? 7 : 0,
+    startTarget: wantsSoftIntro || isSmooth ? 18 : isExciting ? 34 : 25,
+    startTempoWeight: isSmooth ? 0.35 : 0.25,
+    tempoWeight: isSmooth ? 1.25 : isExciting ? 0.9 : 1,
+    keyWeight: isSmooth ? 1.25 : isExciting ? 0.9 : 1,
+    genreWeight: isSmooth ? 1.15 : 1,
+    energyWeight: isExciting ? 0.85 : isSmooth ? 1.15 : 1,
+    movementWeight: isExciting ? 1.25 : isSmooth ? 0.8 : 1
+  };
 }
 
 function getCurrentEnergyValues(data, count) {
